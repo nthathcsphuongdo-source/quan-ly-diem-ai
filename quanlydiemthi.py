@@ -7,7 +7,7 @@ st.set_page_config(page_title="Hệ thống Quản lý Điểm - THCS Phương T
 
 # --- KIỂM TRA VÀ CẤU HÌNH API TỰ ĐỘNG ---
 def init_ai():
-    """Tự động tìm kiếm mô hình phù hợp và xử lý các lỗi API phổ biến."""
+    """Tự động tìm kiếm mô hình phù hợp và xử lý các lỗi API phổ biến (400, 403, 404, 429)."""
     api_key = st.secrets.get("GOOGLE_API_KEY")
     
     if not api_key:
@@ -17,7 +17,7 @@ def init_ai():
     try:
         genai.configure(api_key=api_key)
         
-        # Tự động quét danh sách mô hình khả dụng
+        # Tự động quét danh sách mô hình khả dụng để tránh lỗi 404
         available_models = []
         try:
             for m in genai.list_models():
@@ -26,17 +26,20 @@ def init_ai():
         except Exception as e:
             error_msg = str(e)
             if "403" in error_msg:
-                return None, None, "Lỗi 403: API Key của bạn đã bị lộ (Leaked). Hãy tạo Key mới tại Google AI Studio."
+                return None, None, "Lỗi 403: API Key của bạn đã bị báo cáo là lộ (Leaked) hoặc không có quyền truy cập. Hãy tạo Key mới."
             if "400" in error_msg:
-                return None, None, "Lỗi 400: API Key không hợp lệ. Hãy kiểm tra lại thao tác sao chép."
-            return None, None, f"Lỗi kết nối: {error_msg}"
+                return None, None, "Lỗi 400: API Key không hợp lệ. Vui lòng kiểm tra lại định dạng Key trong Secrets."
+            if "429" in error_msg:
+                return None, None, "Lỗi 429: Bạn đã hết hạn mức sử dụng (Quota). Vui lòng thử lại sau hoặc nâng cấp tài khoản."
+            return None, None, f"Lỗi kết nối API: {error_msg}"
         
         if not available_models:
-            return None, None, "Key này không có quyền sử dụng bất kỳ mô hình tạo nội dung nào."
+            return None, None, "API Key này không có quyền sử dụng bất kỳ mô hình AI nào hiện tại."
 
-        # Ưu tiên chọn các dòng Gemini 1.5, nếu không có thì lấy cái đầu tiên
+        # Ưu tiên chọn các mô hình Gemini 1.5, sau đó đến Pro và cuối cùng là bất kỳ mẫu nào có sẵn
         target_model = None
-        for name in ["models/gemini-1.5-flash", "models/gemini-1.5-pro", "models/gemini-pro"]:
+        priority_list = ["models/gemini-1.5-flash", "models/gemini-1.5-pro", "models/gemini-pro"]
+        for name in priority_list:
             if name in available_models:
                 target_model = name
                 break
@@ -57,13 +60,13 @@ model, model_name, ai_error = init_ai()
 st.title("📊 PHẦN MỀM QUẢN LÝ THÔNG MINH - THCS PHƯƠNG THIỆN")
 st.subheader("Hệ thống Quản lý Điểm thi & Trợ lý AI")
 
-# Hiển thị trạng thái AI dựa trên các lỗi từ ảnh người dùng
+# Hiển thị trạng thái AI dựa trên phản hồi từ hệ thống
 if model:
     st.success(f"✅ AI Sẵn sàng! Đang sử dụng mô hình: `{model_name}`")
 else:
     st.error(f"⚠️ Trợ lý AI đang tạm nghỉ: {ai_error}")
-    if "403" in str(ai_error) or "400" in str(ai_error):
-        st.info("💡 **Hướng dẫn:** Truy cập [Google AI Studio](https://aistudio.google.com/) để tạo lại API Key mới và dán vào Secrets.")
+    if ai_error and ("403" in ai_error or "400" in ai_error):
+        st.info("💡 **Hướng dẫn:** Truy cập [Google AI Studio](https://aistudio.google.com/) để lấy API Key mới và cập nhật vào mục Secrets.")
 
 # --- SIDEBAR: NHẬP LIỆU ---
 with st.sidebar:
@@ -89,7 +92,7 @@ def load_data(file):
 if uploaded_file is not None:
     df = load_data(uploaded_file)
 else:
-    # Dữ liệu mẫu giúp người dùng hình dung
+    # Dữ liệu mẫu giúp người dùng làm quen với hệ thống
     df = pd.DataFrame({
         'STT': [1, 2, 3],
         'Họ và tên': ['Nguyễn Minh Quân', 'Trần Thị Mai', 'Lê Văn Tám'],
@@ -99,13 +102,13 @@ else:
 
 # --- HIỂN THỊ VÀ TÍNH TOÁN ---
 if df is not None:
-    st.write("### 📝 Bảng quản lý điểm số")
-    # Sử dụng data_editor để sửa trực tiếp, tránh lỗi KeyError khi cột bị thay đổi
+    st.write("### 📝 Bảng quản lý điểm số học sinh")
+    # Sử dụng data_editor để chỉnh sửa dữ liệu linh hoạt
     edited_df = st.data_editor(df, use_container_width=True, num_rows="dynamic")
 
-    # Tìm cột điểm thông minh (Giải quyết lỗi KeyError trong ảnh của bạn)
+    # Thuật toán tìm cột điểm thông minh (Để sửa lỗi KeyError: 'Điểm' trong ảnh của bạn)
     score_col = None
-    keywords = ['điểm', 'diem', 'score', 'số điểm', 'điem']
+    keywords = ['điểm', 'diem', 'score', 'số điểm', 'điem', 'điểm thi']
     for col in edited_df.columns:
         if any(key in str(col).lower().strip() for key in keywords):
             score_col = col
@@ -113,10 +116,10 @@ if df is not None:
 
     if score_col:
         try:
-            # Ép kiểu dữ liệu số để tính toán an toàn
+            # Đảm bảo dữ liệu trong cột điểm là dạng số để tính toán
             edited_df[score_col] = pd.to_numeric(edited_df[score_col], errors='coerce').fillna(0)
             
-            # --- KHỐI THỐNG KÊ (Sửa lỗi tại dòng 68 như trong ảnh) ---
+            # --- KHỐI THỐNG KÊ (Sửa lỗi tính toán pass_rate bằng score_col thay vì tên cứng) ---
             c1, c2, c3 = st.columns(3)
             with c1:
                 st.metric("Sĩ số", len(edited_df))
@@ -124,32 +127,43 @@ if df is not None:
                 avg = edited_df[score_col].mean()
                 st.metric("Trung bình lớp", f"{avg:.2f}")
             with c3:
-                # Tính tỷ lệ đạt một cách an toàn bằng biến score_col
+                # Tính tỷ lệ đạt (>= 5.0) một cách an toàn
                 pass_count = len(edited_df[edited_df[score_col] >= 5])
                 rate = (pass_count / len(edited_df) * 100) if len(edited_df) > 0 else 0
                 st.metric("Tỷ lệ Đạt (>=5)", f"{rate:.1f}%")
 
             # --- TRỢ LÝ AI ---
             st.divider()
-            st.write("### 🤖 Trợ lý AI Phân tích")
+            st.write("### 🤖 Trợ lý Giáo dục AI")
             
-            if st.button("🚀 Thầy Trợ Lý AI: Phân tích kết quả"):
+            if st.button("🚀 Thầy Trợ Lý AI: Phân tích kết quả học tập"):
                 if model:
-                    with st.spinner(f"Thầy trợ lý ({model_name}) đang nghiên cứu bảng điểm..."):
+                    with st.spinner(f"Thầy trợ lý AI ({model_name}) đang nghiên cứu dữ liệu..."):
                         try:
                             data_str = edited_df.to_string(index=False)
-                            prompt = f"Bạn là trợ lý giáo dục tại THCS Phương Thiện. Hãy phân tích bảng điểm này:\n{data_str}"
+                            prompt = f"""
+                            Bạn là một người thầy trợ lý ảo tại trường THCS Phương Thiện.
+                            Dựa trên bảng điểm sau, hãy đưa ra nhận xét:
+                            1. Đánh giá sơ bộ về lực học của lớp.
+                            2. Những em học sinh có điểm dưới 5.0 cần giáo viên hỗ trợ thêm.
+                            3. Đề xuất giải pháp sư phạm để nâng cao kết quả học tập.
+                            
+                            Dữ liệu bảng điểm:
+                            {data_str}
+                            """
                             response = model.generate_content(prompt)
-                            st.info("🎓 **Nhận xét chuyên môn:**")
+                            st.info("🎓 **Lời khuyên từ Thầy Trợ Lý AI:**")
                             st.markdown(response.text)
                         except Exception as e:
-                            st.error(f"AI gặp sự cố khi xử lý: {e}")
+                            st.error(f"AI gặp sự cố khi xử lý dữ liệu: {e}")
+                            if "429" in str(e):
+                                st.warning("Mẹo: Hệ thống đang bị quá tải yêu cầu, vui lòng đợi vài phút.")
                 else:
-                    st.warning("Tính năng AI hiện chưa thể sử dụng do lỗi cấu hình API.")
+                    st.warning("⚠️ Chức năng AI hiện chưa khả dụng do lỗi API Key. Vui lòng kiểm tra lại cấu hình.")
         except Exception as err:
-            st.error(f"Lỗi xử lý dữ liệu: {err}")
+            st.error(f"Lỗi khi xử lý dữ liệu điểm số: {err}")
     else:
         st.warning("⚠️ Không tìm thấy cột nào liên quan đến 'Điểm'. Hãy đổi tên cột trong file hoặc sửa trực tiếp ở bảng trên thành 'Điểm'.")
 
 st.divider()
-st.caption("PHẦN MỀM QUẢN LÝ THÔNG MINH - THCS PHƯƠNG THIỆN © 2026")
+st.caption("HỆ THỐNG QUẢN LÝ THÔNG MINH - THCS PHƯƠNG THIỆN © 2024")
