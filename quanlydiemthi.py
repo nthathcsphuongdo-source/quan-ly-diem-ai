@@ -7,26 +7,28 @@ st.set_page_config(page_title="Hệ thống Quản lý Điểm - THCS Phương T
 
 # --- KIỂM TRA VÀ CẤU HÌNH API ---
 def init_ai():
-    """Khởi tạo cấu hình AI từ Secrets của Streamlit với kiểm tra lỗi định dạng."""
+    """Khởi tạo cấu hình AI từ Secrets của Streamlit với kiểm tra lỗi định dạng cực kỳ chặt chẽ."""
     api_key = st.secrets.get("GOOGLE_API_KEY")
     
     if not api_key:
-        return None, "Chưa tìm thấy GOOGLE_API_KEY trong mục Secrets."
+        return None, "Chưa tìm thấy GOOGLE_API_KEY trong mục Secrets của Streamlit."
     
-    # Kiểm tra cơ bản định dạng API Key (thường bắt đầu bằng AIza)
+    # Làm sạch Key (xóa khoảng trắng thừa)
     api_key = str(api_key).strip()
+    
+    # Kiểm tra định dạng cơ bản (Ảnh lỗi 400 cho thấy Key có thể bị dán thiếu hoặc sai)
     if not api_key.startswith("AIza"):
-        return None, "API Key không hợp lệ (thường phải bắt đầu bằng 'AIza'). Hãy kiểm tra lại thao tác Copy."
+        return None, "API Key không hợp lệ. Key chuẩn phải bắt đầu bằng chữ 'AIza'. Hãy kiểm tra lại thao tác Copy của bạn."
 
     try:
         genai.configure(api_key=api_key)
-        # Sử dụng mô hình ổn định nhất
+        # Sử dụng tên mô hình chuẩn nhất hiện nay
         model = genai.GenerativeModel('gemini-1.5-flash')
         return model, None
     except Exception as e:
         return None, f"Lỗi hệ thống AI: {str(e)}"
 
-# Khởi tạo mô hình và lấy thông báo lỗi nếu có
+# Khởi tạo mô hình
 model, ai_error = init_ai()
 
 # --- GIAO DIỆN CHÍNH ---
@@ -41,7 +43,7 @@ with st.sidebar:
     st.info("""
     **Hướng dẫn file:**
     - Chương trình tự tìm cột chứa từ: 'Điểm', 'Diem', 'Số điểm'.
-    - Bạn có thể chỉnh sửa dữ liệu trực tiếp trên bảng.
+    - Bạn có thể sửa trực tiếp trên bảng.
     """)
     
     if st.button("🔄 Làm mới hệ thống"):
@@ -60,11 +62,11 @@ def load_data(file):
         st.error(f"Lỗi khi mở file: {e}")
         return None
 
-# Khởi tạo dữ liệu ban đầu
+# Khởi tạo dữ liệu
 if uploaded_file is not None:
     df = load_data(uploaded_file)
 else:
-    # Dữ liệu mẫu ban đầu
+    # Dữ liệu mẫu ban đầu để app luôn có cái để hiện
     df = pd.DataFrame({
         'STT': [1, 2, 3],
         'Họ và tên': ['Nguyễn Minh Quân', 'Trần Thị Mai', 'Lê Văn Tám'],
@@ -75,23 +77,23 @@ else:
 # --- HIỂN THỊ VÀ XỬ LÝ ---
 if df is not None:
     st.write("### 📝 Bảng quản lý điểm số")
-    # Cho phép sửa trực tiếp (Data Editor)
+    # Sử dụng data_editor để người dùng có thể sửa điểm trực tiếp
     edited_df = st.data_editor(df, use_container_width=True, num_rows="dynamic")
 
-    # Tìm cột điểm thông minh để tránh lỗi KeyError (như trong ảnh lỗi bạn gửi)
+    # THUẬT TOÁN TÌM CỘT ĐIỂM THÔNG MINH (Sửa triệt để lỗi KeyError trong ảnh của bạn)
     score_col = None
     possible_names = ['điểm', 'diem', 'score', 'điểm thi', 'số điểm', 'điem']
     
     for col in edited_df.columns:
-        # Làm sạch tên cột để so sánh chính xác hơn
         clean_col = str(col).strip().lower()
         if any(name in clean_col for name in possible_names):
             score_col = col
             break
 
+    # Chỉ thực hiện tính toán nếu tìm thấy cột điểm
     if score_col:
         try:
-            # Chuyển đổi sang số và xử lý lỗi dữ liệu rác
+            # Chuyển đổi sang số an toàn
             edited_df[score_col] = pd.to_numeric(edited_df[score_col], errors='coerce').fillna(0)
             
             # --- KHỐI THỐNG KÊ ---
@@ -102,6 +104,7 @@ if df is not None:
                 avg_score = edited_df[score_col].mean()
                 st.metric("Trung bình lớp", f"{avg_score:.2f}")
             with c3:
+                # Dùng score_col thay vì viết cứng 'Điểm' để tránh lỗi
                 pass_count = len(edited_df[edited_df[score_col] >= 5])
                 rate = (pass_count / len(edited_df) * 100) if len(edited_df) > 0 else 0
                 st.metric("Tỷ lệ Đạt (>=5)", f"{rate:.1f}%")
@@ -112,38 +115,42 @@ if df is not None:
             
             if st.button("🚀 Thầy Trợ Lý AI: Phân tích kết quả"):
                 if model:
-                    with st.spinner("AI đang nghiên cứu bảng điểm..."):
+                    with st.spinner("AI đang đọc bảng điểm và chuẩn bị nhận xét..."):
                         try:
-                            data_summary = edited_df.to_string(index=False)
+                            data_str = edited_df.to_string(index=False)
                             prompt = f"""
-                            Bạn là Thầy trợ lý AI tại trường THCS Phương Thiện. 
-                            Hãy phân tích dữ liệu điểm sau:
-                            {data_summary}
-                            Yêu cầu: Nhận xét ngắn gọn, chỉ ra học sinh cần lưu ý và đề xuất giải pháp.
+                            Bạn là một người thầy trợ lý ảo tại trường THCS Phương Thiện.
+                            Hãy phân tích bảng điểm sau và đưa ra nhận xét:
+                            1. Tình hình học tập chung.
+                            2. Những em cần chú ý (điểm thấp).
+                            3. Giải pháp cải thiện chất lượng.
+                            
+                            Dữ liệu: {data_str}
                             """
                             response = model.generate_content(prompt)
-                            st.info("🎓 **Nhận xét từ Thầy Trợ Lý AI:**")
+                            st.info("🎓 **Nhận xét chuyên môn:**")
                             st.markdown(response.text)
                         except Exception as e:
-                            # Xử lý lỗi 404/400 (như trong ảnh lỗi)
-                            st.error(f"AI chưa phản hồi được. Chi tiết: {str(e)}")
+                            # Xử lý lỗi 404/400 (như trong ảnh bạn gửi)
                             if "404" in str(e):
-                                st.warning("Mẹo: Mô hình 'gemini-1.5-flash' có thể chưa khả dụng với Key này hoặc ở vùng này. Hãy kiểm tra lại Google AI Studio.")
-                            elif "API_KEY_INVALID" in str(e) or "400" in str(e):
-                                st.error("Lỗi: API Key của bạn không hợp lệ hoặc đã hết hạn.")
+                                st.error("Lỗi 404: Mô hình 'gemini-1.5-flash' không tìm thấy. Có thể Key của bạn chưa được cấp quyền dùng mô hình này.")
+                            elif "400" in str(e):
+                                st.error("Lỗi 400: API Key không hợp lệ (API_KEY_INVALID). Hãy kiểm tra lại mục Secrets.")
+                            else:
+                                st.error(f"AI chưa phản hồi được. Lỗi: {e}")
                 else:
-                    st.error(f"❌ **Lỗi cấu hình AI:** {ai_error}")
+                    st.error(f"❌ {ai_error}")
                     st.markdown("""
                     **Hướng dẫn sửa lỗi:**
                     1. Vào [Google AI Studio](https://aistudio.google.com/) tạo Key mới.
                     2. Kiểm tra lại mục **Secrets** trên Streamlit Cloud:
                        - Tên biến: `GOOGLE_API_KEY`
-                       - Giá trị: `"MÃ_CỦA_BẠN"` (phải nằm trong dấu ngoặc kép).
+                       - Giá trị: `"MÃ_CỦA_BẠN"` (nhớ để trong dấu ngoặc kép).
                     """)
         except Exception as calc_error:
             st.error(f"Lỗi tính toán dữ liệu: {calc_error}")
     else:
-        st.warning("⚠️ Hệ thống không tìm thấy cột 'Điểm'. Hãy đổi tên cột trong file hoặc sửa trực tiếp ở bảng trên thành 'Điểm'.")
+        st.warning("⚠️ Không tìm thấy cột 'Điểm'. Hãy đổi tên cột trong file Excel hoặc sửa tên trực tiếp ở bảng trên.")
 
 # --- CHÂN TRANG ---
 st.divider()
