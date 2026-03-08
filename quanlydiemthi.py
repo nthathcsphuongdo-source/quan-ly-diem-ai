@@ -1,132 +1,105 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import google.generativeai as genai
+import io
 
-# 1. Cấu hình trang và Giao diện
-st.set_page_config(page_title="Quản lý chất lượng - Phương Thiện", layout="wide")
+# --- CẤU HÌNH TRANG ---
+st.set_page_config(page_title="Hệ thống Quản lý Điểm - THCS Phương Thiện", layout="wide")
 
-def setup_ai():
-    """Thiết lập kết nối với Google Gemini AI"""
-    if "API_KEY" in st.secrets:
-        try:
-            genai.configure(api_key=st.secrets["API_KEY"])
-            return genai.GenerativeModel('gemini-1.5-flash')
-        except Exception:
-            return None
-    return None
+# --- KIỂM TRA VÀ CẤU HÌNH API ---
+def init_ai():
+    if "GOOGLE_API_KEY" in st.secrets:
+        genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+        return genai.GenerativeModel('gemini-1.5-flash')
+    else:
+        st.error("⚠️ Chưa cấu hình API Key trong mục Secrets của Streamlit.")
+        return None
 
-model = setup_ai()
+model = init_ai()
 
-st.title("📊 Trợ lý Phân tích Dữ liệu & Dự báo Học tập")
-st.write("Dành cho Ban Giám hiệu trường THCS Phương Thiện")
-st.markdown("---")
+# --- GIAO DIỆN CHÍNH ---
+st.title("📊 PHẦN MỀM QUẢN LÝ THÔNG MINH - THCS PHƯƠNG THIỆN")
+st.subheader("Hệ thống Quản lý Điểm thi & Trợ lý AI")
 
-# 2. Sidebar - Tải dữ liệu
-st.sidebar.header("📁 Dữ liệu đầu vào")
-uploaded_file = st.sidebar.file_uploader("Tải lên file điểm Excel (.xlsx)", type=["xlsx"])
+# --- SIDEBAR: NHẬP LIỆU ---
+with st.sidebar:
+    st.header("📥 Nhập dữ liệu")
+    uploaded_file = st.file_uploader("Tải lên file điểm (Excel hoặc CSV)", type=['xlsx', 'csv'])
+    
+    st.info("""
+    **Hướng dẫn:** File cần có các cột: STT, Họ và tên, Lớp, Điểm.
+    """)
 
-if uploaded_file:
+# --- XỬ LÝ DỮ LIỆU ---
+if uploaded_file is not None:
     try:
-        df = pd.read_excel(uploaded_file)
-        st.success("✅ Đã nạp dữ liệu thành công!")
-        
-        # Hiển thị bảng dữ liệu mẫu
-        with st.expander("👀 Xem bảng dữ liệu thô"):
-            st.dataframe(df)
-
-        # 3. Xử lý lỗi KeyError bằng cách cho người dùng chọn cột
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("⚙️ Cấu hình phân tích")
-        
-        all_columns = df.columns.tolist()
-        
-        # Tự động gợi ý cột có chữ 'Điểm' hoặc 'Trung bình'
-        default_index = 0
-        for i, col in enumerate(all_columns):
-            if "điểm" in col.lower() or "tb" in col.lower() or "trung bình" in col.lower():
-                default_index = i
-                break
-        
-        target_col = st.sidebar.selectbox(
-            "Chọn cột chứa Điểm Tổng Kết để phân tích:",
-            options=all_columns,
-            index=default_index
-        )
-
-        # 4. Hiển thị Dashboard Thống kê
-        col1, col2 = st.columns([1, 2])
-        
-        with col1:
-            st.subheader("📋 Thống kê nhanh")
-            total_students = len(df)
-            avg_score = df[target_col].mean()
-            max_score = df[target_col].max()
-            min_score = df[target_col].min()
-            
-            st.metric("Tổng số học sinh", f"{total_students}")
-            st.metric("Điểm trung bình khối", f"{avg_score:.2f}")
-            st.metric("Điểm cao nhất", f"{max_score:.1f}")
-            
-        with col2:
-            st.subheader("📈 Biểu đồ Phổ điểm")
-            fig = px.histogram(
-                df, 
-                x=target_col, 
-                nbins=10, 
-                title=f"Phân phối điểm số (Cột: {target_col})",
-                labels={target_col: 'Điểm số'},
-                color_discrete_sequence=['#3366ff']
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        # 5. Cảnh báo nguy cơ
-        st.markdown("---")
-        st.subheader("🚨 Danh sách học sinh cần hỗ trợ (Dưới 5.0)")
-        
-        nguy_co = df[df[target_col] < 5]
-        if not nguy_co.empty:
-            st.warning(f"Phát hiện {len(nguy_co)} học sinh có kết quả dưới trung bình.")
-            st.dataframe(nguy_co)
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
         else:
-            st.success("Tất cả học sinh đều đạt mức điểm an toàn.")
-
-        # 6. AI Nhận xét & Dự báo
-        if st.button("🤖 Thầy Trợ Lý AI: Phân tích & Dự báo"):
-            if model:
-                with st.spinner("AI đang đọc bảng điểm và soạn báo cáo..."):
-                    # Tóm tắt dữ liệu để gửi cho AI
-                    stats_summary = df[target_col].describe().to_dict()
-                    prompt = f"""
-                    Bạn là Chuyên gia Quản lý Giáo dục tại Hà Giang. 
-                    Dữ liệu điểm môn Toán (cột {target_col}) của khối 9 như sau:
-                    - Tổng số: {total_students} học sinh.
-                    - Trung bình: {stats_summary['mean']:.2f}
-                    - Thấp nhất: {stats_summary['min']:.1f}
-                    - Cao nhất: {stats_summary['max']:.1f}
-                    
-                    Hãy viết báo cáo ngắn gọn (khoảng 200 chữ) gửi Hiệu trưởng:
-                    1. Đánh giá chất lượng hiện tại.
-                    2. Dự báo khả năng thi đỗ vào lớp 10 (biết điểm chuẩn thường quanh mức 5.0).
-                    3. Đề xuất 2 hành động cụ thể cho tháng tới.
-                    """
-                    
-                    try:
-                        response = model.generate_content(prompt)
-                        st.info("### 📝 Báo cáo phân tích từ AI")
-                        st.markdown(response.text)
-                    except Exception as e:
-                        st.error(f"Lỗi AI: {e}")
-            else:
-                st.error("Chưa cấu hình API Key trong mục Secrets của Streamlit.")
-
+            df = pd.read_excel(uploaded_file)
+        
+        st.success(f"Đã tải lên thành công: {uploaded_file.name}")
     except Exception as e:
         st.error(f"Lỗi khi đọc file: {e}")
-        st.info("Lưu ý: Hãy đảm bảo file Excel của thầy có cột chứa điểm số.")
-
+        df = pd.DataFrame()
 else:
-    st.info("👈 Vui lòng tải lên file Excel điểm số ở thanh bên trái để bắt đầu.")
+    # Dữ liệu mẫu nếu chưa có file
+    data = {
+        'STT': [1, 2],
+        'Họ và tên': ['Nguyễn Minh Quân', 'Trần Thị Mai'],
+        'Lớp': ['9A', '9A'],
+        'Điểm': [4.9, 8.5]
+    }
+    df = pd.DataFrame(data)
+    st.info("💡 Đang hiển thị dữ liệu mẫu. Hãy tải file của bạn ở thanh bên.")
 
-# Chân trang
-st.markdown("---")
-st.caption("PHẦN MỀM QUẢN LÝ THÔNG MINH - THCS PHƯƠNG THIỆN")
+# --- HIỂN THỊ BẢNG ĐIỂM ---
+st.write("### 📝 Danh sách điểm số học sinh")
+edited_df = st.data_editor(df, use_container_width=True, num_rows="dynamic")
+
+# --- TÍNH TOÁN THỐNG KÊ ---
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Tổng số học sinh", len(edited_df))
+with col2:
+    avg_score = edited_df['Điểm'].mean() if 'Điểm' in edited_df.columns else 0
+    st.metric("Điểm trung bình", f"{avg_score:.2f}")
+with col3:
+    pass_rate = (len(edited_df[edited_df['Điểm'] >= 5]) / len(edited_df)) * 100 if len(edited_df) > 0 else 0
+    st.metric("Tỷ lệ đạt (>=5.0)", f"{pass_rate:.1f}%")
+
+# --- CHỨC NĂNG TRỢ LÝ AI ---
+st.divider()
+st.write("### 🤖 Trợ lý Giáo dục thông minh")
+
+if st.button("🤖 Thầy Trợ Lý AI: Phân tích & Dự báo"):
+    if model:
+        with st.spinner("Thầy trợ lý đang phân tích dữ liệu..."):
+            # Chuẩn bị dữ liệu cho AI
+            data_summary = edited_df.to_string(index=False)
+            prompt = f"""
+            Bạn là một người thầy trợ lý ảo tại trường THCS Phương Thiện. 
+            Hãy phân tích bảng điểm sau đây và đưa ra nhận xét:
+            1. Tình hình học tập chung của lớp.
+            2. Danh sách các học sinh cần chú ý (điểm thấp).
+            3. Đề xuất giải pháp cải thiện cho giáo viên.
+            
+            Dữ liệu:
+            {data_summary}
+            
+            Hãy trả lời bằng tiếng Việt, giọng điệu chuyên nghiệp, thân thiện và mang tính xây dựng.
+            """
+            
+            try:
+                response = model.generate_content(prompt)
+                st.markdown("---")
+                st.markdown(f"#### 🎓 Nhận xét từ Thầy Trợ Lý AI:")
+                st.write(response.text)
+            except Exception as e:
+                st.error(f"Lỗi khi gọi AI: {e}")
+    else:
+        st.warning("Vui lòng cấu hình API Key để sử dụng tính năng này.")
+
+# --- CHÂN TRANG ---
+st.divider()
+st.caption("PHẦN MỀM QUẢN LÝ THÔNG MINH - THCS PHƯƠNG THIỆN © 2024")
