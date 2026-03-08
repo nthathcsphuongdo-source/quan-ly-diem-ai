@@ -1,14 +1,13 @@
 import streamlit as st
 import pandas as pd
 import google.generativeai as genai
-import io
 
 # --- CẤU HÌNH TRANG ---
 st.set_page_config(page_title="Hệ thống Quản lý Điểm - THCS Phương Thiện", layout="wide")
 
 # --- KIỂM TRA VÀ CẤU HÌNH API ---
 def init_ai():
-    # Kiểm tra xem GOOGLE_API_KEY có tồn tại trong Secrets không
+    """Khởi tạo cấu hình AI từ Secrets của Streamlit."""
     if "GOOGLE_API_KEY" in st.secrets and st.secrets["GOOGLE_API_KEY"]:
         try:
             genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
@@ -16,9 +15,7 @@ def init_ai():
         except Exception as e:
             st.error(f"Lỗi cấu hình AI: {e}")
             return None
-    else:
-        # Thay vì st.error làm dừng app, ta dùng st.warning ở khu vực AI
-        return None
+    return None
 
 model = init_ai()
 
@@ -32,12 +29,11 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Tải lên file điểm (Excel hoặc CSV)", type=['xlsx', 'csv'])
     
     st.info("""
-    **Yêu cầu định dạng file:**
-    - Cần có cột tên chính xác là: **Điểm**
-    - Các cột bổ trợ: STT, Họ và tên, Lớp.
+    **Mẹo nhỏ:** Chương trình sẽ tự động tìm cột điểm. 
+    Hãy đảm bảo file có cột chứa từ 'Điểm' hoặc 'Diem'.
     """)
     
-    if st.button("Xóa dữ liệu hiện tại"):
+    if st.button("Làm mới hệ thống"):
         st.cache_data.clear()
         st.rerun()
 
@@ -50,66 +46,78 @@ def load_data(file):
         else:
             return pd.read_excel(file)
     except Exception as e:
-        st.error(f"Không thể đọc file: {e}")
+        st.error(f"Lỗi đọc file: {e}")
         return None
 
+# Khởi tạo dữ liệu ban đầu
 if uploaded_file is not None:
     df = load_data(uploaded_file)
 else:
-    # Dữ liệu mẫu
-    data = {
-        'STT': [1, 2],
-        'Họ và tên': ['Nguyễn Minh Quân', 'Trần Thị Mai'],
-        'Lớp': ['9A', '9A'],
-        'Điểm': [4.9, 8.5]
-    }
-    df = pd.DataFrame(data)
+    # Dữ liệu mẫu ban đầu
+    df = pd.DataFrame({
+        'STT': [1, 2, 3],
+        'Họ và tên': ['Nguyễn Minh Quân', 'Trần Thị Mai', 'Lê Văn Tám'],
+        'Lớp': ['9A', '9A', '9B'],
+        'Điểm': [4.5, 8.5, 7.0]
+    })
 
-# --- HIỂN THỊ VÀ KIỂM TRA CỘT ---
+# --- HIỂN THỊ VÀ XỬ LÝ ---
 if df is not None:
-    st.write("### 📝 Danh sách điểm số học sinh")
-    
-    # Cho phép sửa dữ liệu trực tiếp
+    st.write("### 📝 Bảng dữ liệu hiện tại")
+    # Cho phép chỉnh sửa trực tiếp trên giao diện
     edited_df = st.data_editor(df, use_container_width=True, num_rows="dynamic")
 
-    # KIỂM TRA CỘT 'Điểm' TRƯỚC KHI TÍNH TOÁN (Tránh lỗi KeyError)
-    if 'Điểm' in edited_df.columns:
-        # Chuyển đổi cột điểm sang dạng số (nếu chẳng may có dữ liệu rác)
-        edited_df['Điểm'] = pd.to_numeric(edited_df['Điểm'], errors='coerce').fillna(0)
-        
-        # --- TÍNH TOÁN THỐNG KÊ ---
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Tổng số học sinh", len(edited_df))
-        with col2:
-            avg_score = edited_df['Điểm'].mean()
-            st.metric("Điểm trung bình", f"{avg_score:.2f}")
-        with col3:
-            pass_count = len(edited_df[edited_df['Điểm'] >= 5])
-            pass_rate = (pass_count / len(edited_df)) * 100 if len(edited_df) > 0 else 0
-            st.metric("Tỷ lệ đạt (>=5.0)", f"{pass_rate:.1f}%")
-            
-        # --- CHỨC NĂNG TRỢ LÝ AI ---
-        st.divider()
-        st.write("### 🤖 Trợ lý Giáo dục thông minh")
+    # Tự động tìm cột Điểm (không phân biệt hoa thường, có dấu hay không)
+    score_col = None
+    possible_names = ['điểm', 'diem', 'score', 'điểm thi']
+    for col in edited_df.columns:
+        if any(name in col.lower() for name in possible_names):
+            score_col = col
+            break
 
-        if st.button("🤖 Thầy Trợ Lý AI: Phân tích & Dự báo"):
+    if score_col:
+        # Chuyển đổi dữ liệu sang dạng số
+        edited_df[score_col] = pd.to_numeric(edited_df[score_col], errors='coerce').fillna(0)
+        
+        # --- THỐNG KÊ ---
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Sĩ số", len(edited_df))
+        with c2:
+            avg = edited_df[score_col].mean()
+            st.metric("Trung bình lớp", f"{avg:.2f}")
+        with c3:
+            pass_count = len(edited_df[edited_df[score_col] >= 5])
+            rate = (pass_count / len(edited_df) * 100) if len(edited_df) > 0 else 0
+            st.metric("Tỷ lệ đạt", f"{rate:.1f}%")
+
+        # --- TRỢ LÝ AI ---
+        st.divider()
+        st.write("### 🤖 Phân tích thông minh")
+        
+        if st.button("🚀 Yêu cầu Thầy Trợ Lý AI phân tích"):
             if model:
-                with st.spinner("Thầy trợ lý đang phân tích dữ liệu..."):
-                    data_summary = edited_df.to_string(index=False)
-                    prompt = f"Phân tích bảng điểm trường THCS Phương Thiện:\n{data_summary}"
+                with st.spinner("AI đang nghiên cứu bảng điểm..."):
+                    summary = edited_df.to_string(index=False)
+                    prompt = f"""
+                    Bạn là thầy giáo trợ lý AI tại THCS Phương Thiện. 
+                    Dựa trên bảng điểm sau, hãy đưa ra nhận xét ngắn gọn về:
+                    - Học sinh xuất sắc và học sinh cần phụ đạo.
+                    - Đề xuất hướng cải thiện cho lớp.
+                    
+                    Dữ liệu: {summary}
+                    """
                     try:
-                        response = model.generate_content(prompt)
-                        st.info("🎓 **Nhận xét từ Thầy Trợ Lý AI:**")
-                        st.write(response.text)
+                        res = model.generate_content(prompt)
+                        st.info("🎓 **Nhận xét chuyên môn:**")
+                        st.write(res.text)
                     except Exception as e:
-                        st.error(f"Lỗi khi gọi AI: {e}")
+                        st.error(f"AI gặp sự cố: {e}")
             else:
-                st.warning("⚠️ Chức năng AI hiện chưa khả dụng. Vui lòng kiểm tra lại GOOGLE_API_KEY trong mục Secrets của Streamlit.")
+                st.warning("⚠️ Vui lòng cấu hình GOOGLE_API_KEY trong mục Secrets để dùng tính năng này.")
     else:
-        st.error("❌ Không tìm thấy cột 'Điểm' trong file của bạn. Vui lòng kiểm tra lại tên cột (phải viết đúng chữ 'Điểm' có dấu).")
-        st.write("Các cột hiện có trong file của bạn là:", list(edited_df.columns))
+        st.warning("⚠️ Không tìm thấy cột nào liên quan đến 'Điểm'. Hãy đổi tên cột trong file hoặc sửa trực tiếp trên bảng trên.")
 
 # --- CHÂN TRANG ---
 st.divider()
-st.caption("PHẦN MỀM QUẢN LÝ THÔNG MINH - THCS PHƯƠNG THIỆN © 2024")
+st.caption("Ứng dụng phát triển bởi THCS Phương Thiện - 2024")
