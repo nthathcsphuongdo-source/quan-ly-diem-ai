@@ -6,56 +6,48 @@ import google.generativeai as genai
 st.set_page_config(page_title="Hệ thống Quản lý Điểm - THCS Phương Thiện", layout="wide")
 
 # --- KIỂM TRA VÀ CẤU HÌNH API TỰ ĐỘNG ---
-def init_ai():
-    """Tự động tìm kiếm mô hình phù hợp và xử lý các lỗi API phổ biến (400, 403, 404, 429)."""
-    api_key = st.secrets.get("GOOGLE_API_KEY")
+@st.cache_resource
+def setup_ai():
+    if "API_KEY" not in st.secrets:
+        return None, "Thiếu API_KEY trong Secrets"
     
-    if not api_key:
-        return None, None, "Chưa tìm thấy GOOGLE_API_KEY trong mục Secrets của Streamlit."
-    
-    api_key = str(api_key).strip()
     try:
-        genai.configure(api_key=api_key)
+        genai.configure(api_key=st.secrets["API_KEY"])
+        # Liệt kê các mô hình mà mã API này được phép dùng
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
-        # Tự động quét danh sách mô hình khả dụng để tránh lỗi 404
-        available_models = []
-        try:
-            for m in genai.list_models():
-                if 'generateContent' in m.supported_generation_methods:
-                    available_models.append(m.name)
-        except Exception as e:
-            error_msg = str(e)
-            if "403" in error_msg:
-                return None, None, "Lỗi 403: API Key của bạn đã bị báo cáo là lộ (Leaked) hoặc không có quyền truy cập. Hãy tạo Key mới."
-            if "400" in error_msg:
-                return None, None, "Lỗi 400: API Key không hợp lệ. Vui lòng kiểm tra lại định dạng Key trong Secrets."
-            if "429" in error_msg:
-                return None, None, "Lỗi 429: Bạn đã hết hạn mức sử dụng (Quota). Vui lòng thử lại sau hoặc nâng cấp tài khoản."
-            return None, None, f"Lỗi kết nối API: {error_msg}"
+        # Ưu tiên chọn theo thứ tự tốt nhất
+        priority = ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-pro']
+        selected_model_name = None
         
-        if not available_models:
-            return None, None, "API Key này không có quyền sử dụng bất kỳ mô hình AI nào hiện tại."
-
-        # Ưu tiên chọn các mô hình Gemini 1.5, sau đó đến Pro và cuối cùng là bất kỳ mẫu nào có sẵn
-        target_model = None
-        priority_list = ["models/gemini-1.5-flash", "models/gemini-1.5-pro", "models/gemini-pro"]
-        for name in priority_list:
-            if name in available_models:
-                target_model = name
+        for p in priority:
+            if p in available_models:
+                selected_model_name = p
                 break
         
-        if not target_model:
-            target_model = available_models[0]
+        if not selected_model_name and available_models:
+            selected_model_name = available_models[0]
             
-        model = genai.GenerativeModel(target_model)
-        return model, target_model, None
-        
+        if selected_model_name:
+            return genai.GenerativeModel(selected_model_name), f"Đang dùng: {selected_model_name}"
+        return None, "Không tìm thấy mô hình khả dụng"
     except Exception as e:
-        return None, None, f"Lỗi khởi tạo hệ thống: {str(e)}"
-
-# Khởi tạo AI
-model, model_name, ai_error = init_ai()
-
+        return None, str(e)
+model, status_msg = setup_ai()
+def get_gemini_response(prompt):
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    
+    # Bắt lỗi khi vượt quá số lượng request (Rate Limit)
+    except exceptions.ResourceExhausted:
+        st.error("Hệ thống đang bận do quá nhiều yêu cầu (Rate Limit). Vui lòng đợi 30-60 giây rồi thử lại.")
+        return None
+    
+    # Bắt các lỗi hệ thống khác
+    except Exception as e:
+        st.error(f"Đã xảy ra lỗi: {e}")
+        return None
 # --- GIAO DIỆN CHÍNH ---
 st.title("📊 PHẦN MỀM QUẢN LÝ THÔNG MINH - THCS PHƯƠNG THIỆN")
 st.subheader("Hệ thống Quản lý Điểm thi & Trợ lý AI")
@@ -167,4 +159,5 @@ if df is not None:
 
 st.divider()
 st.caption("HỆ THỐNG QUẢN LÝ THÔNG MINH - THCS PHƯƠNG THIỆN © 2024")
+
 
